@@ -1,50 +1,59 @@
-# 🏪 Polaris Merchant App
+# Irion Merchant / Neobank Console
 
-The **Polaris Merchant App** is a dedicated portal for businesses to manage their crypto settlements, integration keys, and payment analytics within the Polaris ecosystem. It provides the necessary tools to onboard merchants into the future of decentralized e-commerce.
+A [Next.js 16](https://nextjs.org/) app that serves two roles in the Irion stack:
 
-## 🚀 Key Features
-- **Merchant Dashboard**: Real-time overview of payments, total volume, and pending settlements.
-- **Integration Management**: Generate and manage API credentials for the Polaris Checkout integration.
-- **Settlement Tracking**: Monitor automated settlements and manual withdrawals.
-- **Analytics**: Detailed reports on customer payment behavior and asset preferences.
+1. **Neobank / B2B console** (`/dashboard`) — a passkey-authenticated (WebAuthn)
+   business-banking console that drives the [`irion-b2b-api`](../irion-b2b-api):
+   treasury, FX, payroll, and lending. Onboarding and login use the browser
+   authenticator (Touch ID / Windows Hello / FIDO2) — no spoofable
+   `x-wallet-address` header — and the returned session token authorises every
+   call. Dashboard sections: `treasury/`, `payments/`, `payroll/`, `lending/`,
+   `settings/`.
 
-## 🛠️ Tech Stack
-- **Framework**: [Next.js](https://nextjs.org/) (App Router)
-- **Styling**: Tailwind CSS
-- **Data Layer**: Convex & Supabase
-- **UI Components**: Shadcn UI & Framer Motion
+2. **Merchant checkout API** (`/api/bills/*`, `/api/apps/*`, `/api/payments`,
+   backed by MongoDB) — the bills/apps plumbing the
+   [`irion-shopping-app-canton`](../irion-shopping-app-canton) storefront calls
+   via `@irion/sdk` to create a bill and obtain a hosted-checkout URL.
 
----
+## Architecture
 
-## 🚀 Getting Started
+- **Console → b2b-api:** `lib/neobank.ts` is the client for the Irion B2B /
+  neobank API. It handles passkey register/login (`@simplewebauthn/browser`) and
+  bearer-token-authorised requests against `NEXT_PUBLIC_B2B_API_URL`
+  (defaults to `http://localhost:8088`).
+- **Checkout API → MongoDB:** `lib/mongodb.ts` connects to MongoDB Atlas; the
+  `/api/bills/*` and `/api/apps/*` routes store merchant apps, API keys, and
+  bills. These power the external storefront checkout flow, ultimately handing
+  off to the Irion `/pay` hosted checkout on Canton.
 
-### Installation
+## How to run
+
+The console expects the b2b-api on `:8088` and the consumer core on `:3000`
+(cross-app URLs assume core is there). Run this app on **port 3004**:
+
 ```bash
 npm install
+npm run dev -- -p 3004
 ```
 
-### Development
+Then open [http://localhost:3004/dashboard](http://localhost:3004/dashboard).
+
+### Environment
+
+Create `.env.local`:
+
 ```bash
-npm run dev
+# B2B / neobank API the console consumes (treasury, FX, payroll, lending)
+NEXT_PUBLIC_B2B_API_URL=http://localhost:8088
+
+# MongoDB connection for the merchant checkout API (/api/bills, /api/apps)
+MONGODB_URI=mongodb+srv://...
 ```
-Open [http://localhost:3000](http://localhost:3000) to view the application.
 
----
+## Tech stack
 
-## 📁 Directory Structure
-- `app/`: Main dashboard, settings, and settlement pages.
-- `components/`: UI components for charts, tables, and merchant forms.
-- `hooks/`: Integration hooks for the Polaris API.
-- `lib/`: Business logic for merchant authentication and data processing.
-
-## 🔒 Integration Role
-The Merchant App coordinates with the `polaris-core` API to create bills and authorize checkout sessions for external storefronts like Shopify.
-
----
-
-## ⚙️ Sepolia Contract Configurations
-The app is wired directly to the active Fhenix Sepolia smart contracts. The configuration can be inspected and updated in:
-* [`lib/constants.ts`](file:///d:/Project/fhenix/polaris-merchant-app-fhenix/lib/constants.ts)
-
-It imports JSON ABIs directly to coordinate payments and settle balances using confidential Fhenix-based routing.
-
+- Next.js 16 (App Router, Turbopack)
+- React 19, Tailwind CSS v4, Framer Motion
+- `@simplewebauthn/browser` (passkey / WebAuthn auth)
+- MongoDB (`mongodb` driver) for the merchant checkout API
+- `@canton-network/*` SDK packages
