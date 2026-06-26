@@ -1,168 +1,321 @@
-"use client"
+"use client";
 
-export const dynamic = "force-dynamic"
+export const dynamic = "force-dynamic";
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react";
 import {
-  Wallet, Banknote, TrendingUp, ArrowUpRight, Lock, Loader2, AlertTriangle,
-} from "lucide-react"
-import { useParty } from "@/lib/canton-connect-kit"
+  Wallet, ArrowLeftRight, TrendingUp, Loader2, AlertTriangle, ArrowDownToLine, Coins,
+} from "lucide-react";
+import * as nb from "@/lib/neobank";
+import { PageHeader, Card, Stat, fmt, page, btn, btnGhost, input, label } from "@/components/neobank/ui";
 
-const B2B = process.env.NEXT_PUBLIC_B2B_API_URL ?? "http://localhost:8088"
-
-const short = (s: string, head = 10, tail = 8) =>
-  s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`
-
-const usd = (n: number) => `$${n.toFixed(2)}`
+const CURRENCIES = ["USDC", "EURC", "GBPC"] as const;
+type Currency = (typeof CURRENCIES)[number];
 
 type Treasury = {
-  party: string
-  cash: number
-  yieldShares: number
-  yieldValue: number
-  total: number
-}
+  balances: { USDC: number; EURC: number; GBPC: number };
+  cash: number;
+  yieldShares: number;
+  yieldValue: number;
+  total: number;
+};
+type Rates = { source: string; rates: Record<string, number> };
 
 export default function TreasuryPage() {
-  const { party } = useParty()
-  const partyId = party?.partyId
+  const [treasury, setTreasury] = useState<Treasury | null>(null);
+  const [rates, setRates] = useState<Rates | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [data, setData] = useState<Treasury | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [unreachable, setUnreachable] = useState(false)
+  // deposit form
+  const [depAmount, setDepAmount] = useState("");
+  const [depCurrency, setDepCurrency] = useState<Currency>("USDC");
 
-  const load = useCallback(async (p: string) => {
-    setLoading(true)
-    setUnreachable(false)
+  // fx rebalance form
+  const [fxFrom, setFxFrom] = useState<Currency>("USDC");
+  const [fxTo, setFxTo] = useState<Currency>("EURC");
+  const [fxAmount, setFxAmount] = useState("");
+  const [fxResult, setFxResult] = useState<{ bought: number; to: string; updateId: string } | null>(null);
+
+  // yield form
+  const [sweepAmount, setSweepAmount] = useState("");
+
+  const refresh = useCallback(async () => {
+    const t = await nb.getTreasury();
+    setTreasury(t as Treasury);
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const res = await fetch(`${B2B}/v1/wallet/treasury?party=${encodeURIComponent(p)}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = (await res.json()) as Treasury
-      setData(json)
-    } catch {
-      setUnreachable(true)
-      setData(null)
+      const [t, r] = await Promise.all([nb.getTreasury(), nb.getRates()]);
+      setTreasury(t as Treasury);
+      setRates(r as Rates);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    if (!partyId) return
-    void load(partyId)
-  }, [partyId, load])
+    void load();
+  }, [load]);
 
-  if (!partyId) {
+  // wrap a mutation: guard busy, clear error, run, refresh balances
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDeposit() {
+    const amount = Number(depAmount);
+    if (!amount || amount <= 0) { setError("Enter a deposit amount greater than 0."); return; }
+    await run(async () => { await nb.deposit(amount, depCurrency); });
+    setDepAmount("");
+  }
+
+  async function onRebalance() {
+    const amount = Number(fxAmount);
+    if (!amount || amount <= 0) { setError("Enter a rebalance amount greater than 0."); return; }
+    if (fxFrom === fxTo) { setError("Pick two different currencies to rebalance."); return; }
+    setFxResult(null);
+    await run(async () => {
+      const res = await nb.rebalance(fxFrom, fxTo, amount);
+      setFxResult({ bought: res.bought, to: res.to, updateId: res.updateId });
+    });
+    setFxAmount("");
+  }
+
+  async function onSweep() {
+    const amount = Number(sweepAmount);
+    if (!amount || amount <= 0) { setError("Enter an amount to sweep greater than 0."); return; }
+    await run(async () => { await nb.sweep(amount); });
+    setSweepAmount("");
+  }
+
+  async function onRedeem() {
+    await run(async () => { await nb.redeem(); });
+  }
+
+  // live rate for the selected fx pair
+  const fxPair = `${fxFrom}:${fxTo}`;
+  const fxRate = fxFrom === fxTo ? 1 : rates?.rates[fxPair];
+  const fxReceive = fxRate != null && Number(fxAmount) > 0 ? Number(fxAmount) * fxRate : null;
+
+  if (loading && !treasury) {
     return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center text-center px-6 font-display">
-        <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
-          <Wallet className="w-7 h-7 text-primary" />
+      <div className={page}>
+        <PageHeader
+          title="Treasury"
+          subtitle="Multi-currency balances, FX rebalancing, and yield — all settled on Canton."
+        />
+        <div className="flex items-center justify-center gap-2.5 text-white/40 py-24">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="text-xs font-bold uppercase tracking-widest">Loading treasury…</span>
         </div>
-        <h1 className="text-2xl font-black tracking-tight mb-2">Connect your Canton wallet</h1>
-        <p className="text-white/50 max-w-sm text-sm leading-relaxed">
-          Connect Carpincho from the sidebar to view your treasury — the USDC your storefront has
-          settled on Canton, private by construction.
-        </p>
       </div>
-    )
+    );
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto font-display">
-      <header className="mb-8">
-        <h1 className="text-2xl font-black tracking-tight">Treasury</h1>
-        <p className="text-sm text-white/40 mt-1">
-          Your USDC on Canton — settled from checkouts, private by construction.
-        </p>
-      </header>
+    <div className={page}>
+      <PageHeader
+        title="Treasury"
+        subtitle="Multi-currency balances, FX rebalancing, and yield — all settled on Canton."
+      />
 
-      {unreachable && (
-        <div className="flex items-center gap-2.5 bg-amber-500/[0.07] border border-amber-500/20 rounded-xl px-4 py-3 mb-6 text-amber-300/90">
+      {error && (
+        <div className="flex items-center gap-2.5 bg-red-500/[0.07] border border-red-500/20 rounded-xl px-4 py-3 mb-6 text-red-300/90">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span className="text-xs font-bold uppercase tracking-wide">Canton ledger unreachable — showing no balance.</span>
+          <span className="text-xs font-bold">{error}</span>
         </div>
       )}
 
-      {/* Hero balance */}
-      {loading && !data ? (
-        <div className="h-44 bg-white/5 rounded-2xl animate-pulse mb-6" />
-      ) : (
-        <section className="relative overflow-hidden bg-gradient-to-br from-primary/[0.08] to-white/[0.02] border border-primary/20 rounded-2xl p-7 mb-6">
-          <div className="absolute -top-16 -right-16 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="relative">
-            <div className="flex items-center gap-2 text-primary/80 mb-3">
-              <Lock className="w-4 h-4" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Total on Canton</span>
-            </div>
-            <div className="text-5xl font-black tracking-tight tabular-nums">
-              {data ? usd(data.total) : "$0.00"}
-              <span className="text-lg text-white/30 font-bold ml-2">USDC</span>
-            </div>
-            <p className="text-xs text-white/40 mt-4 font-mono">
-              settling party <code className="text-primary/90">{short(partyId)}</code>
-            </p>
+      {/* Balance stats */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+        {CURRENCIES.map((c) => (
+          <Stat key={c} label={c} value={fmt(treasury?.balances[c])} sub="balance" />
+        ))}
+        <Stat label="Yield" value={fmt(treasury?.yieldValue)} sub="in pool" />
+        <Stat label="Total (USDC + yield)" value={fmt(treasury?.total)} sub="USDC equiv." />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Deposit */}
+        <Card>
+          <div className="flex items-center gap-2 mb-4">
+            <ArrowDownToLine className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-black uppercase tracking-widest">Deposit</h2>
           </div>
-        </section>
-      )}
-
-      {/* Cash + Yield */}
-      {loading && !data ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          {[1, 2].map((i) => <div key={i} className="h-40 bg-white/5 rounded-2xl animate-pulse" />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          {/* Cash */}
-          <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 flex flex-col">
-            <div className="flex items-center gap-2 text-white/40 mb-3">
-              <Banknote className="w-4 h-4" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Cash</span>
+          <p className="text-xs text-white/40 mb-4 leading-relaxed">
+            Add funds to your treasury in any supported currency — settled on the Canton ledger.
+          </p>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="col-span-2">
+              <label className={label}>Amount</label>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={depAmount}
+                onChange={(e) => setDepAmount(e.target.value)}
+                placeholder="0.00"
+                className={`${input} mt-1`}
+              />
             </div>
-            <div className="text-3xl font-black tabular-nums">{data ? usd(data.cash) : "$0.00"}</div>
-            <p className="text-xs text-white/40 mt-2 leading-relaxed">Idle USDC, ready to spend or sweep.</p>
-            <div className="mt-auto pt-5">
-              <button
-                disabled
-                title="Coming soon"
-                className="w-full flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-black uppercase tracking-tighter text-white/30 cursor-not-allowed"
+            <div>
+              <label className={label}>Currency</label>
+              <select
+                value={depCurrency}
+                onChange={(e) => setDepCurrency(e.target.value as Currency)}
+                className={`${input} mt-1`}
               >
-                <ArrowUpRight className="w-3.5 h-3.5" /> Sweep to yield — coming soon
-              </button>
+                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={onDeposit} disabled={busy} className={`${btn} w-full`}>
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowDownToLine className="w-3.5 h-3.5" />}
+            Deposit
+          </button>
+        </Card>
+
+        {/* FX rebalance */}
+        <Card>
+          <div className="flex items-center gap-2 mb-4">
+            <ArrowLeftRight className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-black uppercase tracking-widest">FX Rebalance</h2>
+          </div>
+          <p className="text-xs text-white/40 mb-4 leading-relaxed">
+            Convert between currencies at the live rate. Settled atomically on Canton.
+          </p>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div>
+              <label className={label}>From</label>
+              <select
+                value={fxFrom}
+                onChange={(e) => { setFxFrom(e.target.value as Currency); setFxResult(null); }}
+                className={`${input} mt-1`}
+              >
+                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={label}>To</label>
+              <select
+                value={fxTo}
+                onChange={(e) => { setFxTo(e.target.value as Currency); setFxResult(null); }}
+                className={`${input} mt-1`}
+              >
+                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={label}>Amount</label>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={fxAmount}
+                onChange={(e) => setFxAmount(e.target.value)}
+                placeholder="0.00"
+                className={`${input} mt-1`}
+              />
             </div>
           </div>
 
-          {/* Yield position */}
-          <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 flex flex-col">
-            <div className="flex items-center gap-2 text-white/40 mb-3">
-              <TrendingUp className="w-4 h-4 text-primary" />
-              <span className="text-[10px] font-bold uppercase tracking-widest">Yield position</span>
+          <div className="flex items-center justify-between text-xs bg-white/[0.03] border border-white/10 rounded-xl px-3 py-2.5 mb-4">
+            <span className="text-white/40">
+              Rate{" "}
+              {fxFrom === fxTo ? (
+                <span className="text-white/30">same currency</span>
+              ) : fxRate != null ? (
+                <span className="text-white/70 font-mono tabular-nums">1 {fxFrom} = {fmt(fxRate, 4)} {fxTo}</span>
+              ) : (
+                <span className="text-white/30">unavailable</span>
+              )}
+            </span>
+            <span className="text-white/40">
+              You receive{" "}
+              <span className="text-primary font-mono tabular-nums">
+                ≈ {fxReceive != null ? fmt(fxReceive) : "—"} {fxTo}
+              </span>
+            </span>
+          </div>
+
+          <button onClick={onRebalance} disabled={busy} className={`${btn} w-full`}>
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowLeftRight className="w-3.5 h-3.5" />}
+            Rebalance
+          </button>
+
+          {fxResult && (
+            <div className="mt-3 text-[11px] text-primary/90 bg-primary/[0.06] border border-primary/20 rounded-xl px-3 py-2.5">
+              Bought <span className="font-mono tabular-nums font-bold">{fmt(fxResult.bought)} {fxResult.to}</span>
+              <span className="text-white/40 font-mono ml-2">update {fxResult.updateId}</span>
             </div>
-            <div className="text-3xl font-black tabular-nums">{data ? usd(data.yieldValue) : "$0.00"}</div>
-            <p className="text-xs text-white/40 mt-2 leading-relaxed">Supplied to the pool, earning.</p>
-            {data && data.yieldShares > 0 && (
-              <p className="text-[10px] text-white/30 mt-1 font-mono tabular-nums">{data.yieldShares} shares</p>
-            )}
-            <div className="mt-auto pt-5">
-              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-primary/70">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /> Active
-              </div>
+          )}
+        </Card>
+
+        {/* Yield */}
+        <Card className="lg:col-span-2">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-black uppercase tracking-widest">Yield</h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
+              <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Yield value</div>
+              <div className="text-xl font-black tabular-nums">{fmt(treasury?.yieldValue)}</div>
+              <div className="text-[11px] text-white/40 mt-1">USDC supplied + earned</div>
+            </div>
+            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
+              <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Pool shares</div>
+              <div className="text-xl font-black tabular-nums">{fmt(treasury?.yieldShares)}</div>
+              <div className="text-[11px] text-white/40 mt-1">your PoolShare</div>
+            </div>
+            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4">
+              <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Idle cash</div>
+              <div className="text-xl font-black tabular-nums">{fmt(treasury?.cash)}</div>
+              <div className="text-[11px] text-white/40 mt-1">available to sweep</div>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Explainer */}
-      <section className="bg-white/[0.02] border border-white/10 rounded-2xl p-6 flex items-start gap-3">
-        <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-          {loading ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <Lock className="w-4 h-4 text-primary" />}
-        </div>
-        <p className="text-xs text-white/50 leading-relaxed">
-          Settlements from your storefront&apos;s <span className="text-white/80 font-bold">BNPL</span>,{" "}
-          <span className="text-white/80 font-bold">Direct</span> and{" "}
-          <span className="text-white/80 font-bold">Credit</span> checkouts land here on the Canton ledger —
-          visible only to you and Irion. Sub-transaction privacy means counterparties never see your balance.
-        </p>
-      </section>
+          <div className="flex flex-col md:flex-row md:items-end gap-4">
+            <div className="flex-1">
+              <label className={label}>Amount to sweep (USDC)</label>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={sweepAmount}
+                onChange={(e) => setSweepAmount(e.target.value)}
+                placeholder="0.00"
+                className={`${input} mt-1`}
+              />
+            </div>
+            <button onClick={onSweep} disabled={busy} className={`${btn} md:w-44`}>
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Coins className="w-3.5 h-3.5" />}
+              Sweep to yield
+            </button>
+            <button onClick={onRedeem} disabled={busy} className={`${btnGhost} md:w-44`}>
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wallet className="w-3.5 h-3.5" />}
+              Redeem all
+            </button>
+          </div>
+        </Card>
+      </div>
     </div>
-  )
+  );
 }

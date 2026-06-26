@@ -1,192 +1,80 @@
-"use client"
+"use client";
 
-export const dynamic = "force-dynamic"
-
-import { useCallback, useEffect, useState } from "react"
-import {
-  Boxes, Plus, Loader2, Copy, Check, Trash2, Wallet, KeyRound, ShoppingBag, X,
-} from "lucide-react"
-import { useParty } from "@/lib/canton-connect-kit"
-import { merchantApi, type MerchantApp } from "@/lib/canton-merchant"
-
-const short = (s: string, head = 10, tail = 8) =>
-  s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Wallet, Landmark, Users, ArrowRight, Loader2 } from "lucide-react";
+import { useNeobank } from "@/components/neobank/auth";
+import * as nb from "@/lib/neobank";
+import { PageHeader, Card, Stat, fmt, page } from "@/components/neobank/ui";
 
 export default function Overview() {
-  const { party } = useParty()
-  const partyId = party?.partyId
-
-  const [apps, setApps] = useState<MerchantApp[]>([])
-  const [loading, setLoading] = useState(false)
-  const [name, setName] = useState("")
-  const [creating, setCreating] = useState(false)
-  const [newKeys, setNewKeys] = useState<MerchantApp | null>(null)
-  const [error, setError] = useState<string | undefined>(undefined)
-
-  const refresh = useCallback(async (p: string) => {
-    setLoading(true)
-    try { setApps(await merchantApi.listApps(p)) }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-    finally { setLoading(false) }
-  }, [])
+  const { account } = useNeobank();
+  const [t, setT] = useState<any>(null);
+  const [credit, setCredit] = useState<any>(null);
+  const [events, setEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!partyId) return
-    void merchantApi.sync(partyId).then(() => refresh(partyId))
-  }, [partyId, refresh])
+    (async () => {
+      try {
+        const [tt, c, e] = await Promise.all([
+          nb.getTreasury(),
+          nb.getCredit().catch(() => ({ credit: null })),
+          nb.getEvents().catch(() => ({ events: [] })),
+        ]);
+        setT(tt); setCredit(c.credit); setEvents(e.events || []);
+      } finally { setLoading(false); }
+    })();
+  }, []);
 
-  const onCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!partyId || !name.trim()) return
-    setCreating(true); setError(undefined)
-    try {
-      const app = await merchantApi.createApp(partyId, name.trim())
-      setNewKeys(app)
-      setName("")
-      await refresh(partyId)
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
-    finally { setCreating(false) }
-  }
-
-  const onDelete = async (id: string, n: string) => {
-    if (!partyId || !confirm(`Delete "${n}"? Removes its API keys + bills.`)) return
-    try { await merchantApi.deleteApp(partyId, id); await refresh(partyId) }
-    catch { setError("delete failed") }
-  }
-
-  if (!partyId) {
-    return (
-      <div className="min-h-[80vh] flex flex-col items-center justify-center text-center px-6 font-display">
-        <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
-          <Wallet className="w-7 h-7 text-primary" />
-        </div>
-        <h1 className="text-2xl font-black tracking-tight mb-2">Connect your Canton wallet</h1>
-        <p className="text-white/50 max-w-sm text-sm leading-relaxed">
-          Connect Carpincho from the sidebar to open your merchant console — create apps, mint API keys,
-          and accept BNPL &amp; private credit on Canton.
-        </p>
-      </div>
-    )
-  }
+  if (loading) return <div className={page}><Loader2 className="w-6 h-6 text-primary animate-spin" /></div>;
+  const balances: Record<string, number> = t?.balances || {};
 
   return (
-    <div className="p-8 max-w-6xl mx-auto font-display">
-      <header className="mb-8">
-        <h1 className="text-2xl font-black tracking-tight">Overview</h1>
-        <p className="text-sm text-white/40 mt-1 font-mono">
-          Settling to <code className="text-primary">{short(partyId)}</code> on Canton
-        </p>
-      </header>
+    <div className={page}>
+      <PageHeader title={`Welcome, ${account?.name || "there"}`} subtitle="Your programmable treasury on Canton — private by construction." />
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <Kpi label="Apps" value={String(apps.length)} icon={<Boxes className="w-4 h-4" />} />
-        <Kpi label="Active" value={String(apps.filter((a) => a.status === "active").length)} icon={<Check className="w-4 h-4" />} />
-        <Kpi label="Network" value="Canton" icon={<ShoppingBag className="w-4 h-4" />} />
-        <Kpi label="Settlement" value="Private" icon={<KeyRound className="w-4 h-4" />} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <Stat label="Treasury (USDC)" value={`$${fmt(t?.cash)}`} sub={`total incl. yield $${fmt(t?.total)}`} />
+        <Stat label="Yield position" value={`$${fmt(t?.yieldValue)}`} sub={`${fmt(t?.yieldShares, 0)} shares`} />
+        <Stat label="Credit available" value={credit ? `$${fmt(credit.available)}` : "—"} sub={credit ? `of $${fmt(credit.creditLimit)} · score ${credit.score}` : "not underwritten yet"} />
+        <Stat label="Currencies" value={Object.keys(balances).length || 1} sub={Object.keys(balances).join(" · ") || "USDC"} />
       </div>
 
-      {/* Create app */}
-      <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 mb-8">
-        <h2 className="text-sm font-black uppercase tracking-widest text-white/70 mb-1">Create an app</h2>
-        <p className="text-xs text-white/40 mb-4">A store with its own API keys — drop them into your storefront to accept Irion checkout.</p>
-        <form onSubmit={onCreate} className="flex flex-col sm:flex-row gap-2">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="App name (e.g. Acme Coffee)"
-            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-primary focus:outline-none transition-colors"
-          />
-          <button
-            type="submit"
-            disabled={creating || !name.trim()}
-            className="bg-primary text-black px-6 py-3 rounded-xl font-black text-sm uppercase tracking-tighter hover:scale-[1.02] active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
-          >
-            {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create
-          </button>
-        </form>
-        {error !== undefined && <p className="text-[11px] text-red-400 font-bold mt-3 uppercase tracking-wide">{error}</p>}
-      </section>
+      <div className="grid md:grid-cols-3 gap-4 mb-8">
+        {[
+          { href: "/dashboard/treasury", label: "Move & rebalance", desc: "Deposit, FX swap USDC↔EURC, earn yield", icon: Wallet },
+          { href: "/dashboard/payroll", label: "Run payroll", desc: "Private salaries — each invisible to others", icon: Users },
+          { href: "/dashboard/lending", label: "Borrow", desc: "Working capital against your credit line", icon: Landmark },
+        ].map((q) => (
+          <Link key={q.href} href={q.href}>
+            <Card className="hover:border-primary/40 transition-colors group h-full">
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2 rounded-lg bg-primary/10 text-primary"><q.icon className="w-4 h-4" /></div>
+                <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-primary transition-colors" />
+              </div>
+              <div className="font-bold text-sm">{q.label}</div>
+              <div className="text-[11px] text-white/40 mt-1">{q.desc}</div>
+            </Card>
+          </Link>
+        ))}
+      </div>
 
-      {/* Apps list */}
-      <section>
-        <h2 className="text-sm font-black uppercase tracking-widest text-white/70 mb-4">Your apps</h2>
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => <div key={i} className="h-32 bg-white/5 rounded-2xl animate-pulse" />)}
-          </div>
-        ) : apps.length === 0 ? (
-          <div className="text-center py-16 border border-dashed border-white/10 rounded-2xl bg-white/[0.02] text-white/40 text-sm">
-            No apps yet — create one above to get your API keys.
-          </div>
+      <Card>
+        <div className="text-[10px] text-white/40 uppercase tracking-widest mb-4">Recent activity</div>
+        {events.length === 0 ? (
+          <p className="text-xs text-white/30 py-4 text-center">No activity yet — deposit to your treasury to begin.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {apps.map((app) => (
-              <div key={app._id} className="group bg-white/[0.03] border border-white/10 rounded-2xl p-5 hover:border-primary/40 transition-all">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center text-lg font-bold">{app.name.charAt(0)}</div>
-                  <button onClick={() => onDelete(app._id, app.name)} className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-all"><Trash2 className="w-4 h-4" /></button>
-                </div>
-                <h3 className="text-base font-black uppercase italic mb-1">{app.name}</h3>
-                <p className="text-[10px] text-white/40 uppercase tracking-widest mb-4">{app.category || "General"}</p>
-                <CopyRow label="client_id" value={app.client_id} />
+          <div className="flex flex-col divide-y divide-white/5">
+            {events.slice(0, 8).map((e) => (
+              <div key={e.id} className="flex items-center justify-between py-2.5 text-xs">
+                <span className="font-mono text-primary/80">{e.type}</span>
+                <span className="text-white/30">{new Date(e.createdAt).toLocaleString()}</span>
               </div>
             ))}
           </div>
         )}
-      </section>
-
-      {newKeys && <KeyRevealModal app={newKeys} onClose={() => setNewKeys(null)} />}
+      </Card>
     </div>
-  )
-}
-
-function Kpi({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
-  return (
-    <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4">
-      <div className="flex items-center gap-2 text-white/40 mb-2">{icon}<span className="text-[10px] font-bold uppercase tracking-widest">{label}</span></div>
-      <div className="text-xl font-black">{value}</div>
-    </div>
-  )
-}
-
-function CopyRow({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <button
-      onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200) }}
-      className="w-full flex items-center justify-between gap-2 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-left hover:border-white/20 transition-colors"
-      title="Copy"
-    >
-      <div className="min-w-0">
-        <div className="text-[8px] text-white/40 uppercase tracking-widest">{label}</div>
-        <code className="text-[10px] text-white/80 block truncate">{value}</code>
-      </div>
-      {copied ? <Check className="w-3.5 h-3.5 text-primary shrink-0" /> : <Copy className="w-3.5 h-3.5 text-white/40 shrink-0" />}
-    </button>
-  )
-}
-
-function KeyRevealModal({ app, onClose }: { app: MerchantApp; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
-      <div className="bg-zinc-950 border border-primary/30 rounded-2xl p-7 max-w-md w-full shadow-[0_0_60px_-12px_rgba(166,242,74,0.3)]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h3 className="text-lg font-black tracking-tight">{app.name} — keys</h3>
-            <p className="text-[11px] text-amber-400/90 font-bold uppercase tracking-wide mt-1">Copy the secret now — shown once.</p>
-          </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex flex-col gap-3">
-          <CopyRow label="client_id" value={app.client_id} />
-          {app.client_secret && <CopyRow label="client_secret" value={app.client_secret} />}
-        </div>
-        <p className="text-[10px] text-white/40 mt-4 leading-relaxed">
-          Set these as <code className="text-white/60">IRION_CLIENT_ID</code> / <code className="text-white/60">IRION_CLIENT_SECRET</code> in your store
-          to create Canton checkouts.
-        </p>
-      </div>
-    </div>
-  )
+  );
 }
