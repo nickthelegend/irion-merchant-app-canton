@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowRight, Code2, ShieldCheck, Zap, ShoppingBag } from 'lucide-react';
+import { ArrowRight, Code2, ShieldCheck, Zap } from 'lucide-react';
 
 export default function Home() {
     return (
@@ -34,7 +34,7 @@ export default function Home() {
 
                     <p className="text-lg text-white/50 max-w-2xl mx-auto mb-10 leading-relaxed animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-100 font-medium">
                         The complete payment stack for web3 developers. Integrate decentralized payments,
-                        generate bills, and settle on-chain instantly on Stellar Testnet.
+                        generate bills, and settle on-chain instantly on the Canton Network.
                     </p>
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-in fade-in slide-in-from-bottom-10 duration-1000 delay-200">
@@ -43,12 +43,6 @@ export default function Home() {
                             className="bg-primary text-black font-black px-10 py-5 rounded-xl hover:scale-105 transition-all active:scale-95 flex items-center gap-2 w-full sm:w-auto justify-center uppercase tracking-tighter shadow-[0_8px_30px_rgba(166,242,74,0.3)]"
                         >
                             Developer Portal <ArrowRight className="w-4 h-4" />
-                        </Link>
-                        <Link
-                            href="/shop"
-                            className="bg-white/5 border border-white/10 text-white font-bold px-10 py-5 rounded-xl hover:bg-white/10 transition-all active:scale-95 flex items-center gap-2 w-full sm:w-auto justify-center uppercase tracking-tighter"
-                        >
-                            <ShoppingBag className="w-4 h-4" /> Live Demo
                         </Link>
                     </div>
                 </div>
@@ -70,7 +64,7 @@ export default function Home() {
                     <FeatureCard
                         icon={<Zap className="w-6 h-6 text-primary" />}
                         title="Instant Sync"
-                        description="Powered by Stellar Testnet for secure and transparent settlements."
+                        description="Powered by the Canton Network for secure and private settlements."
                     />
                 </div>
             </section>
@@ -108,7 +102,7 @@ export function Checkout() {
             </section>
 
             <footer className="border-t border-white/5 py-12 text-center text-white/20 text-[10px] uppercase tracking-[0.3em] font-bold">
-                <p>&copy; 2026 Irion // Built on Stellar Testnet</p>
+                <p>&copy; 2026 Irion // Built on the Canton Network</p>
             </footer>
         </div>
     );

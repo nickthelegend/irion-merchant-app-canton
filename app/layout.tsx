@@ -10,8 +10,8 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata = {
-  title: 'Irion for Merchants | Accept BNPL on Stellar',
-  description: 'Accept Buy-Now-Pay-Never payments on Stellar with one line of code.',
+  title: 'Irion for Merchants | Accept BNPL on Canton',
+  description: 'Accept Buy-Now-Pay-Never payments on the Canton Network with one line of code.',
   icons: {
     icon: '/logo.png',
     apple: '/logo.png',

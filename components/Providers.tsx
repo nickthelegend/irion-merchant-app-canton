@@ -3,15 +3,13 @@
 import { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
-import { StellarWalletProvider } from '@/lib/stellar-wallet';
 import { ConnectKitProvider } from '@/lib/canton-connect-kit';
 import type { ConnectKitConfig } from '@/lib/canton-connect-kit';
 
 // The merchant app is Canton-first: the whole app sits under the Carpincho
 // ConnectKitProvider so the global header + the sidebar console share one wallet
-// connection. (StellarWalletProvider is kept only for the not-yet-ported legacy
-// pages — the app detail + demo shop.) The dapp-sdk is lazy-loaded on connect,
-// so this provider is SSR-safe at the root.
+// connection. The dapp-sdk is lazy-loaded on connect, so this provider is
+// SSR-safe at the root.
 const queryClient = new QueryClient();
 const cantonConfig: ConnectKitConfig = {
     appName: 'Irion Merchant',
@@ -23,10 +21,8 @@ export default function Providers({ children }: { children: ReactNode }) {
     return (
         <QueryClientProvider client={queryClient}>
             <ConnectKitProvider config={cantonConfig}>
-                <StellarWalletProvider>
-                    {children}
-                    <Toaster position="top-right" theme="dark" />
-                </StellarWalletProvider>
+                {children}
+                <Toaster position="top-right" theme="dark" />
             </ConnectKitProvider>
         </QueryClientProvider>
     );

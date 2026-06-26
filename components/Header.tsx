@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Wallet, LogOut, LayoutDashboard, LayoutGrid, Loader2 } from 'lucide-react';
+import { Wallet, LogOut, LayoutDashboard, Loader2 } from 'lucide-react';
 import { useConnect, useParty } from '@/lib/canton-connect-kit';
 
 export default function Header() {
@@ -11,8 +11,8 @@ export default function Header() {
     const { party } = useParty();
     const pathname = usePathname();
 
-    // /shop has its own chrome; /dashboard uses the Canton sidebar console.
-    if (pathname === '/shop' || pathname?.startsWith('/dashboard')) return null;
+    // /dashboard uses the Canton sidebar console, so hide the marketing header there.
+    if (pathname?.startsWith('/dashboard')) return null;
 
     return (
         <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl">
@@ -32,10 +32,6 @@ export default function Header() {
                         <Link href="/dashboard" className="hover:text-primary transition-colors flex items-center gap-2">
                             <LayoutDashboard className="w-4 h-4" />
                             Console
-                        </Link>
-                        <Link href="/shop" className="hover:text-primary transition-colors flex items-center gap-2">
-                            <LayoutGrid className="w-4 h-4" />
-                            Live Demo
                         </Link>
                     </nav>
                 </div>

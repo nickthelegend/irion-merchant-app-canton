@@ -18,9 +18,9 @@ export interface MerchantApp {
   client_secret: string;
   network: string;
   status: "active" | "inactive";
-  /** Merchant's Stellar settlement address (the IrionCore escrow key). */
+  /** Merchant's on-ledger settlement recipient (the Canton party / escrow contract). */
   escrow_contract?: string;
-  /** Same Stellar address that authorizes merchant_withdraw on IrionCore. */
+  /** Settlement capability that authorizes the merchant withdraw on Canton. */
   escrow_cap?: string;
   created_at: Date;
   updated_at: Date;

@@ -34,15 +34,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const db = await getDb();
 
     // Whitelist updatable fields — never allow client_secret/client_id/user_id/_id/
-    // escrow_contract/status to be overwritten via this route (mass-assignment guard).
+    // status to be overwritten via this route (mass-assignment guard).
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (typeof body.name === 'string') update.name = body.name;
     if (typeof body.category === 'string') update.category = body.category;
-    // Owner-set on-chain config (Link Settlement Address sets these). Still blocks
-    // client_secret / client_id / user_id / _id / status from being overwritten.
+    // Owner-set settlement config. Still blocks client_secret / client_id /
+    // user_id / _id / status from being overwritten.
     if (typeof body.escrow_contract === 'string') update.escrow_contract = body.escrow_contract;
     if (typeof body.escrow_cap === 'string') update.escrow_cap = body.escrow_cap;
-    if (typeof body.stellar_address === 'string') update.stellar_address = body.stellar_address;
     if (typeof body.network === 'string') update.network = body.network;
     // Checkout config — which methods /pay offers: { direct, bnpl, credit } (booleans).
     if (body.checkout_methods && typeof body.checkout_methods === 'object') {
