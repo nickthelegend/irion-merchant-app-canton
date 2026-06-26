@@ -23,7 +23,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         if (!(await ownsApp(db, id, walletAddress))) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
         }
-        const webhooks = await db.collection('webhooks').find({ app_id: id }).project({ secret: 0 }).toArray();
+        const docs = await db.collection('webhooks').find({ app_id: id }).project({ secret: 0 }).toArray();
+        // Expose a string `id` — the UI keys off it; Mongo returns `_id`.
+        const webhooks = docs.map((w) => ({ ...w, id: String(w._id) }));
         return NextResponse.json({ webhooks });
     } catch {
         return NextResponse.json({ error: 'Internal error' }, { status: 500 });
@@ -50,6 +52,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
         const webhook = await db.collection('webhooks').findOne({ _id: result.insertedId });
         return NextResponse.json({ webhook }); // secret returned once, omitted from subsequent GETs
+    } catch {
+        return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    }
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const { id } = await params;
+    const walletAddress = req.headers.get('x-wallet-address');
+    const webhookId = new URL(req.url).searchParams.get('webhookId');
+    try {
+        const db = await getDb();
+        if (!(await ownsApp(db, id, walletAddress))) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        }
+        if (!webhookId) return NextResponse.json({ error: 'webhookId required' }, { status: 400 });
+        await db.collection('webhooks').deleteOne({ _id: new ObjectId(webhookId), app_id: id });
+        return NextResponse.json({ ok: true });
     } catch {
         return NextResponse.json({ error: 'Internal error' }, { status: 500 });
     }

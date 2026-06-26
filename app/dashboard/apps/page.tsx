@@ -3,21 +3,19 @@
 export const dynamic = "force-dynamic"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import {
-  Boxes, Plus, Loader2, Copy, Check, Trash2, Wallet, KeyRound, ShoppingBag, X,
+  Boxes, Plus, Loader2, Copy, Check, Trash2, Wallet, X, Settings2, Calendar, Tag,
 } from "lucide-react"
 import { useParty } from "@/lib/canton-connect-kit"
 import { merchantApi, type MerchantApp } from "@/lib/canton-merchant"
 
-const short = (s: string, head = 10, tail = 8) =>
-  s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`
-
-export default function Overview() {
+export default function AppsPage() {
   const { party } = useParty()
   const partyId = party?.partyId
 
   const [apps, setApps] = useState<MerchantApp[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [name, setName] = useState("")
   const [creating, setCreating] = useState(false)
   const [newKeys, setNewKeys] = useState<MerchantApp | null>(null)
@@ -72,19 +70,11 @@ export default function Overview() {
   return (
     <div className="p-8 max-w-6xl mx-auto font-display">
       <header className="mb-8">
-        <h1 className="text-2xl font-black tracking-tight">Overview</h1>
-        <p className="text-sm text-white/40 mt-1 font-mono">
-          Settling to <code className="text-primary">{short(partyId)}</code> on Canton
+        <h1 className="text-2xl font-black tracking-tight">Apps</h1>
+        <p className="text-sm text-white/50 mt-1 leading-relaxed max-w-xl">
+          Your stores and their API keys. Drop the keys into a storefront to accept Irion checkout.
         </p>
       </header>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <Kpi label="Apps" value={String(apps.length)} icon={<Boxes className="w-4 h-4" />} />
-        <Kpi label="Active" value={String(apps.filter((a) => a.status === "active").length)} icon={<Check className="w-4 h-4" />} />
-        <Kpi label="Network" value="Canton" icon={<ShoppingBag className="w-4 h-4" />} />
-        <Kpi label="Settlement" value="Private" icon={<KeyRound className="w-4 h-4" />} />
-      </div>
 
       {/* Create app */}
       <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 mb-8">
@@ -110,26 +100,63 @@ export default function Overview() {
 
       {/* Apps list */}
       <section>
-        <h2 className="text-sm font-black uppercase tracking-widest text-white/70 mb-4">Your apps</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-black uppercase tracking-widest text-white/70">Your apps</h2>
+          {!loading && apps.length > 0 && (
+            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/40">
+              <Boxes className="w-3.5 h-3.5" /> {apps.length} {apps.length === 1 ? "store" : "stores"}
+            </span>
+          )}
+        </div>
+
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => <div key={i} className="h-32 bg-white/5 rounded-2xl animate-pulse" />)}
+            {[1, 2, 3].map((i) => <div key={i} className="h-56 bg-white/5 rounded-2xl animate-pulse" />)}
           </div>
         ) : apps.length === 0 ? (
           <div className="text-center py-16 border border-dashed border-white/10 rounded-2xl bg-white/[0.02] text-white/40 text-sm">
-            No apps yet — create one above to get your API keys.
+            No apps yet — create your first store above to get API keys.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {apps.map((app) => (
-              <div key={app._id} className="group bg-white/[0.03] border border-white/10 rounded-2xl p-5 hover:border-primary/40 transition-all">
+              <div key={app._id} className="group bg-white/[0.03] border border-white/10 rounded-2xl p-5 flex flex-col hover:border-primary/40 transition-all">
                 <div className="flex items-start justify-between mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center text-lg font-bold">{app.name.charAt(0)}</div>
-                  <button onClick={() => onDelete(app._id, app.name)} className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-all"><Trash2 className="w-4 h-4" /></button>
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center text-lg font-bold">{app.name.charAt(0).toUpperCase()}</div>
+                  <button
+                    onClick={() => onDelete(app._id, app.name)}
+                    title="Delete app"
+                    className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <h3 className="text-base font-black uppercase italic mb-1">{app.name}</h3>
-                <p className="text-[10px] text-white/40 uppercase tracking-widest mb-4">{app.category || "General"}</p>
-                <CopyRow label="client_id" value={app.client_id} />
+
+                <h3 className="text-base font-black uppercase italic mb-2 truncate">{app.name}</h3>
+
+                <div className="flex items-center flex-wrap gap-2 mb-4">
+                  <StatusPill status={app.status} />
+                  <span className="inline-flex items-center gap-1 text-[10px] text-white/40 uppercase tracking-widest">
+                    <Tag className="w-3 h-3" /> {app.category || "General"}
+                  </span>
+                  {app.created_at && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-white/40 uppercase tracking-widest">
+                      <Calendar className="w-3 h-3" /> {new Date(app.created_at).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-auto">
+                  <CopyRow label="client_id" value={app.client_id} />
+                  <div className="flex items-center justify-between mt-3">
+                    <Link
+                      href="/dashboard/settings"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-primary/80 hover:text-primary transition-colors"
+                    >
+                      <Settings2 className="w-3.5 h-3.5" /> Configure checkout →
+                    </Link>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -141,12 +168,20 @@ export default function Overview() {
   )
 }
 
-function Kpi({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+function StatusPill({ status }: { status: string }) {
+  const active = status === "active"
   return (
-    <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4">
-      <div className="flex items-center gap-2 text-white/40 mb-2">{icon}<span className="text-[10px] font-bold uppercase tracking-widest">{label}</span></div>
-      <div className="text-xl font-black">{value}</div>
-    </div>
+    <span
+      className={
+        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest " +
+        (active
+          ? "bg-primary/15 text-primary border border-primary/30"
+          : "bg-white/5 text-white/40 border border-white/10")
+      }
+    >
+      <span className={"w-1.5 h-1.5 rounded-full " + (active ? "bg-primary" : "bg-white/30")} />
+      {status || "unknown"}
+    </span>
   )
 }
 

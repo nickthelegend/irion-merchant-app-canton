@@ -36,7 +36,7 @@ export async function GET(
         name: app.name,
         category: app.category || "General",
         escrow_contract: app.escrow_contract || null,
-        sui_address: app.sui_address || null,
+        stellar_address: app.stellar_address || null,
         user: { wallet_address: app.wallet_address || "" },
       } : null,
     });

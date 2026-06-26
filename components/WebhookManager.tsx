@@ -26,16 +26,23 @@ interface Webhook {
 
 interface Props {
     appId: string;
+    walletAddress?: string | null;
 }
 
-export default function WebhookManager({ appId }: Props) {
+export default function WebhookManager({ appId, walletAddress }: Props) {
     const { mutate: globalMutate } = useSWRConfig();
-    const { data, error, mutate } = useSWR(`/api/apps/${appId}/webhooks`, (url) => fetch(url).then(res => res.json()));
+    const { data, error, mutate } = useSWR(
+        walletAddress ? `/api/apps/${appId}/webhooks` : null,
+        (url: string) => fetch(url, { headers: { 'x-wallet-address': walletAddress || '' } }).then(res => res.json())
+    );
     const [isAdding, setIsAdding] = useState(false);
     const [newUrl, setNewUrl] = useState('');
     const [loading, setLoading] = useState(false);
     const [testing, setTesting] = useState<string | null>(null);
     const [showSecret, setShowSecret] = useState<string | null>(null);
+    // The HMAC secret is returned ONCE on creation (the list GET omits it); keep
+    // freshly-created secrets in session state so the user can reveal/copy them.
+    const [createdSecrets, setCreatedSecrets] = useState<Record<string, string>>({});
 
     const webhooks: Webhook[] = data?.webhooks || [];
 
@@ -45,10 +52,16 @@ export default function WebhookManager({ appId }: Props) {
         try {
             const res = await fetch(`/api/apps/${appId}/webhooks`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-wallet-address': walletAddress || '' },
                 body: JSON.stringify({ url: newUrl, events: ['payment.settled'] })
             });
             if (res.ok) {
+                const { webhook } = await res.json().catch(() => ({ webhook: null }));
+                if (webhook?._id && webhook?.secret) {
+                    const wid = String(webhook._id);
+                    setCreatedSecrets((s) => ({ ...s, [wid]: webhook.secret }));
+                    setShowSecret(wid); // reveal the one-time secret immediately
+                }
                 mutate();
                 setNewUrl('');
                 setIsAdding(false);
@@ -65,19 +78,32 @@ export default function WebhookManager({ appId }: Props) {
         try {
             const res = await fetch('/api/webhooks/test', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-wallet-address': walletAddress || '' },
                 body: JSON.stringify({ webhookId })
             });
             const result = await res.json();
             if (result.success) {
                 alert('Test webhook sent successfully!');
             } else {
-                alert(`Failed to send test: ${result.status}`);
+                alert(`Failed to send test: ${result.error || result.status || 'unknown error'}`);
             }
         } catch (e) {
             console.error(e);
         } finally {
             setTesting(null);
+        }
+    };
+
+    const handleDelete = async (webhookId: string) => {
+        if (!confirm('Delete this webhook endpoint?')) return;
+        try {
+            const res = await fetch(`/api/apps/${appId}/webhooks?webhookId=${webhookId}`, {
+                method: 'DELETE',
+                headers: { 'x-wallet-address': walletAddress || '' },
+            });
+            if (res.ok) mutate();
+        } catch (e) {
+            console.error(e);
         }
     };
 
@@ -108,7 +134,7 @@ export default function WebhookManager({ appId }: Props) {
                         <input
                             value={newUrl}
                             onChange={(e) => setNewUrl(e.target.value)}
-                            placeholder="https://your-api.com/webhooks/polaris"
+                            placeholder="https://your-api.com/webhooks/irion"
                             className="w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary transition-colors"
                         />
                     </div>
@@ -154,18 +180,22 @@ export default function WebhookManager({ appId }: Props) {
                                     >
                                         {showSecret === wh.id ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                                     </button>
-                                    <button className="text-white/20 hover:text-red-500 transition-colors">
+                                    <button
+                                        onClick={() => handleDelete(wh.id)}
+                                        className="text-white/20 hover:text-red-500 transition-colors"
+                                        title="Delete endpoint"
+                                    >
                                         <Trash2 className="w-3.5 h-3.5" />
                                     </button>
                                 </div>
                             </div>
 
                             {showSecret === wh.id && (
-                                <div className="bg-primary/5 border border-primary/10 rounded p-2 flex items-center justify-between">
-                                    <code className="text-[10px] text-primary font-mono select-all">
-                                        {wh.secret}
+                                <div className="bg-primary/5 border border-primary/10 rounded p-2 flex items-center justify-between gap-2">
+                                    <code className="text-[10px] text-primary font-mono select-all break-all">
+                                        {createdSecrets[wh.id] || wh.secret || 'Shown only once, when the endpoint is created.'}
                                     </code>
-                                    <span className="text-[8px] uppercase font-bold text-primary/50">HMAC Secret</span>
+                                    <span className="text-[8px] uppercase font-bold text-primary/50 shrink-0">HMAC Secret</span>
                                 </div>
                             )}
 

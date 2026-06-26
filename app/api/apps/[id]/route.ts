@@ -14,7 +14,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // In our simplified MongoDB schema, we link merchant_apps using user_id: walletAddress
     const app = await db.collection('merchant_apps').findOne(
         { _id: new ObjectId(id), user_id: walletAddress },
-        { projection: { client_secret_hash: 0 } } // owner may reveal their own client_secret
+        { projection: { client_secret: 0, client_secret_hash: 0 } } // never expose secrets to the browser
     );
 
     if (!app) {
@@ -38,17 +38,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (typeof body.name === 'string') update.name = body.name;
     if (typeof body.category === 'string') update.category = body.category;
-    // Owner-set on-chain config (Deploy Escrow links these). Still blocks
+    // Owner-set on-chain config (Link Settlement Address sets these). Still blocks
     // client_secret / client_id / user_id / _id / status from being overwritten.
     if (typeof body.escrow_contract === 'string') update.escrow_contract = body.escrow_contract;
     if (typeof body.escrow_cap === 'string') update.escrow_cap = body.escrow_cap;
-    if (typeof body.sui_address === 'string') update.sui_address = body.sui_address;
+    if (typeof body.stellar_address === 'string') update.stellar_address = body.stellar_address;
     if (typeof body.network === 'string') update.network = body.network;
+    // Checkout config — which methods /pay offers: { direct, bnpl, credit } (booleans).
+    if (body.checkout_methods && typeof body.checkout_methods === 'object') {
+        const cm = body.checkout_methods as Record<string, unknown>;
+        update.checkout_methods = {
+            direct: cm.direct !== false,
+            bnpl: cm.bnpl !== false,
+            credit: cm.credit !== false,
+        };
+    }
 
     const result = await db.collection('merchant_apps').findOneAndUpdate(
         { _id: new ObjectId(id), user_id: walletAddress },
         { $set: update },
-        { returnDocument: 'after', projection: { client_secret_hash: 0 } }
+        { returnDocument: 'after', projection: { client_secret: 0, client_secret_hash: 0 } }
     );
 
     if (!result) {

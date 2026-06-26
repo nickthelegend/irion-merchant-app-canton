@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
         if (!app) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
 
         const result = await sendWebhook(webhookId, 'test.event', {
-            message: 'Test webhook from XORR Console',
+            message: 'Test webhook from Irion Console',
             id: `test_${crypto.randomUUID()}`,
             timestamp: new Date().toISOString(),
         });

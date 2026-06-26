@@ -14,7 +14,7 @@ const nextConfig = {
         headers: [
           // No credentials → `*` origin is valid (browsers reject `*` + credentials).
           // The apps authenticate via the x-wallet-address / x-client-* headers and
-          // postMessage, not cross-origin cookies. This allows the xorr.finance
+          // postMessage, not cross-origin cookies. This allows the irion
           // subdomains (app/merchants/shop/docs) + localhost to call the API.
           { key: "Access-Control-Allow-Origin", value: "*" },
           { key: "Access-Control-Allow-Methods", value: "GET,DELETE,PATCH,POST,PUT,OPTIONS" },

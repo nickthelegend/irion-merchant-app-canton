@@ -26,8 +26,8 @@ export async function sendWebhook(webhookId: string, event: string, payload: any
 
     const headers = {
         'Content-Type': 'application/json',
-        'X-Polaris-Signature': `t=${timestamp},v1=${signature}`,
-        'User-Agent': 'Polaris-Webhook-Service/1.0'
+        'X-Irion-Signature': `t=${timestamp},v1=${signature}`,
+        'User-Agent': 'Irion-Webhook-Service/1.0'
     };
 
     let responseStatus = 0;

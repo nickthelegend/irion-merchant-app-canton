@@ -43,7 +43,7 @@ export async function OPTIONS() {
 
 export async function POST(req: NextRequest) {
     try {
-        const { wallet_address, name, category } = await req.json();
+        const { wallet_address, name, category, network } = await req.json();
 
         if (!wallet_address || !name) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 3. Create App with unique credentials (crypto.randomUUID for client_id, randomBytes for secret)
-        const client_id = `xorr_${crypto.randomUUID().replace(/-/g, '')}`;
+        const client_id = `irion_${crypto.randomUUID().replace(/-/g, '')}`;
         const client_secret = `sk_${crypto.randomBytes(24).toString('hex')}`;
 
         const newApp = {
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
             client_id,
             client_secret, // kept so the owner can reveal it in their dashboard (testnet)
             client_secret_hash: hashSecret(client_secret),
-            network: 'sui:testnet',
+            network: network || 'canton:irion-sandbox',
             status: 'active',
             created_at: new Date(),
             updated_at: new Date()

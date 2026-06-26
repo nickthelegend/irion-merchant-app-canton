@@ -1,7 +1,7 @@
 import { MongoClient, Db } from "mongodb";
 
 const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
-const dbName = process.env.MONGODB_DB || "polaris_merchant";
+const dbName = process.env.MONGODB_DB || "irion";
 
 let client: MongoClient;
 let db: Db;

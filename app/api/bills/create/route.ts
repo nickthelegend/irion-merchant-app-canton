@@ -39,14 +39,29 @@ export async function POST(req: Request) {
     created_at: new Date(),
   });
 
-  const coreUrl = process.env.POLARIS_CORE_URL || "http://localhost:3000";
+  const coreUrl = process.env.IRION_CORE_URL || "http://localhost:3000";
+  // Carry the bill on the checkout URL: the bill lives in THIS (merchant) DB, but
+  // the Canton /pay page renders from query params (it doesn't share our DB).
+  // `party` is the merchant's Canton party = the on-ledger settlement target.
+  // Which checkout methods this merchant offers (default: all on).
+  const cm = app.checkout_methods || {};
+  const methods = ["direct", "bnpl", "credit"].filter((m) => cm[m] !== false).join(",");
+  const params = new URLSearchParams({
+    amount: String(parseFloat(amount)),
+    merchant: app.name || "Merchant",
+    desc: description || "",
+    party: app.user_id || app.wallet_address || "",
+    methods: methods || "credit",
+  });
   return NextResponse.json({
     billId: result.insertedId,
     billHash,
-    checkoutUrl: `${coreUrl}/pay/${billHash}`,
+    orderId: billHash,
+    checkoutUrl: `${coreUrl}/pay/${billHash}?${params.toString()}`,
     merchantName: app.name,
-    escrowAddress: app.escrow_contract,
-    network: "sui:testnet",
+    // On Canton, the settlement target is the merchant's Canton party.
+    party: app.user_id || app.wallet_address,
+    network: "canton:irion-sandbox",
     asset,
     status: "pending",
   });

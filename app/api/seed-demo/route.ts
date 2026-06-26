@@ -3,11 +3,12 @@ import { getDb } from '@/lib/mongodb';
 import { hashSecret } from '@/lib/secret';
 import crypto from 'crypto';
 
-// Demo merchant for the XORR shopping-app → /pay → Sui settlement flow.
-// Wired to the live USDC v3 MerchantEscrow + the deployer's Sui address so
-// bills created with these credentials settle on Sui testnet.
-const DEMO_ESCROW = '0x44945bd13ef548fd3beb77c6d111bdfd88e549a3650a9caa7213d527d4e59c0c';
-const DEMO_SUI_ADDRESS = '0xbe4290542197515da9967183c24b60ad092f0d08a7baf1201f7eec913d44dc23';
+// Demo merchant for the Irion shopping-app → /pay → Stellar settlement flow.
+// Wired to the deployer's Stellar address, which is both the merchant wallet and
+// the IrionCore escrow key, so bills created with these credentials settle on
+// Stellar testnet.
+const DEMO_STELLAR_ADDRESS = 'GBKZC3N4UVFZ54CAM7I26NWIDQLQJVPPUVDNLDBAS5PC3BAUA3GYOYXR';
+const DEMO_ESCROW = DEMO_STELLAR_ADDRESS;
 
 export async function GET() {
     try {
@@ -15,25 +16,25 @@ export async function GET() {
 
         // 1. Create merchant user
         await db.collection('merchant_users').insertOne({
-            wallet_address: DEMO_SUI_ADDRESS,
+            wallet_address: DEMO_STELLAR_ADDRESS,
             created_at: new Date(),
             updated_at: new Date(),
         });
 
-        // 2. Create merchant app with API credentials + Sui settlement targets
-        const client_id = `xorr_${crypto.randomBytes(12).toString('hex')}`;
+        // 2. Create merchant app with API credentials + Stellar settlement targets
+        const client_id = `irion_${crypto.randomBytes(12).toString('hex')}`;
         const client_secret = `sk_${crypto.randomBytes(24).toString('hex')}`;
 
         const newApp = {
-            user_id: DEMO_SUI_ADDRESS,
-            wallet_address: DEMO_SUI_ADDRESS,
-            sui_address: DEMO_SUI_ADDRESS,
-            name: 'XORR Demo Shop',
+            user_id: DEMO_STELLAR_ADDRESS,
+            wallet_address: DEMO_STELLAR_ADDRESS,
+            stellar_address: DEMO_STELLAR_ADDRESS,
+            name: 'Irion Demo Shop',
             category: 'E-commerce',
             client_id,
             client_secret, // kept for dashboard reveal (testnet demo)
             client_secret_hash: hashSecret(client_secret),
-            network: 'sui:testnet',
+            network: 'stellar:testnet',
             asset: 'USDC',
             escrow_contract: DEMO_ESCROW,
             status: 'active',
@@ -44,11 +45,11 @@ export async function GET() {
         const result = await db.collection('merchant_apps').insertOne(newApp);
 
         return NextResponse.json({
-            wallet: DEMO_SUI_ADDRESS,
+            wallet: DEMO_STELLAR_ADDRESS,
             app_id: result.insertedId,
             client_id,
             client_secret,
-            network: 'sui:testnet',
+            network: 'stellar:testnet',
             escrow_contract: DEMO_ESCROW,
         });
     } catch (e: any) {

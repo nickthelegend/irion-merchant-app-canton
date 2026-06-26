@@ -18,9 +18,9 @@ export interface MerchantApp {
   client_secret: string;
   network: string;
   status: "active" | "inactive";
-  /** Shared `MerchantEscrow<USDT>` object id on Sui. */
+  /** Merchant's Stellar settlement address (the IrionCore escrow key). */
   escrow_contract?: string;
-  /** `MerchantCap` object id (held by the merchant) authorizing withdrawal. */
+  /** Same Stellar address that authorizes merchant_withdraw on IrionCore. */
   escrow_cap?: string;
   created_at: Date;
   updated_at: Date;

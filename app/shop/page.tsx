@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { PayWithPolaris } from '@/components/sdk/PayWithPolaris';
+import { PayWithIrion } from '@/components/sdk/PayWithIrion';
 import { ShoppingBag, Star, Package } from 'lucide-react';
 import Image from 'next/image';
 
@@ -68,8 +68,8 @@ export default function Shop() {
                         <div className="pt-8 border-t border-gray-100">
                             <h3 className="text-sm font-bold uppercase tracking-widest text-gray-400 mb-4">Secure Checkout</h3>
 
-                            {/* Polaris Integration */}
-                            <PayWithPolaris
+                            {/* Irion Integration */}
+                            <PayWithIrion
                                 apiKey="DEMO_KEY"
                                 apiSecret="DEMO_SECRET"
                                 amount={50}
@@ -79,7 +79,7 @@ export default function Shop() {
                             />
 
                             <p className="text-xs text-center text-gray-400 mt-4">
-                                Testing Mode: This will process on Sui Testnet (USDC)
+                                Testing Mode: This will process on Stellar Testnet (USDC)
                             </p>
                         </div>
                     </div>

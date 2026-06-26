@@ -1,8 +1,9 @@
 'use client';
 
-import { useCurrentAccount } from '@mysten/dapp-kit';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { useStellarWallet } from '@/lib/stellar-wallet';
+import { explorerTx } from '@/lib/stellar';
 
 type Analytics = {
   settledCount: number;
@@ -17,23 +18,23 @@ type Analytics = {
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 export default function AnalyticsPage() {
-  const account = useCurrentAccount();
+  const { address } = useStellarWallet();
   const [data, setData] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!account?.address) { setLoading(false); return; }
+    if (!address) { setLoading(false); return; }
     setLoading(true);
-    fetch('/api/analytics', { headers: { 'x-wallet-address': account.address } })
+    fetch('/api/analytics', { headers: { 'x-wallet-address': address } })
       .then((r) => r.json())
       .then((d) => { if (!d.error) setData(d); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [account?.address]);
+  }, [address]);
 
   const cards = [
-    { label: 'Settled with XORR', value: data ? String(data.settledCount) : '—', sub: 'transactions' },
-    { label: 'Settled volume', value: data ? `$${fmt(data.settledVolume)}` : '—', sub: 'USDC on Sui' },
+    { label: 'Settled with Irion', value: data ? String(data.settledCount) : '—', sub: 'transactions' },
+    { label: 'Settled volume', value: data ? `$${fmt(data.settledVolume)}` : '—', sub: 'USDC on Stellar' },
     { label: 'Pending', value: data ? String(data.pendingCount) : '—', sub: 'awaiting payment' },
     { label: 'Conversion', value: data && data.totalBills > 0 ? `${Math.round((data.settledCount / data.totalBills) * 100)}%` : '—', sub: 'bills settled' },
   ];
@@ -43,13 +44,13 @@ export default function AnalyticsPage() {
     <div className="max-w-6xl mx-auto px-6 py-10 font-mono text-foreground">
       <div className="flex items-center justify-between mb-8 flex-wrap gap-3">
         <div>
-          <span className="text-[10px] tracking-[0.4em] text-primary/70 uppercase">XORR // Merchant Analytics</span>
+          <span className="text-[10px] tracking-[0.4em] text-primary/70 uppercase">Irion // Merchant Analytics</span>
           <h1 className="text-3xl font-black uppercase tracking-tighter mt-1">Settlement Analytics</h1>
         </div>
         <Link href="/dashboard" className="px-4 py-2 rounded-lg border border-white/10 bg-white/5 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all">← Dashboard</Link>
       </div>
 
-      {!account ? (
+      {!address ? (
         <div className="border border-white/10 rounded-2xl p-12 text-center text-sm text-foreground/50">Connect your wallet to view analytics.</div>
       ) : loading ? (
         <div className="border border-white/10 rounded-2xl p-12 text-center text-sm text-foreground/50">Loading…</div>
@@ -82,7 +83,7 @@ export default function AnalyticsPage() {
                       <div className="flex items-center gap-4 flex-shrink-0">
                         <span className="text-sm font-black text-primary">${fmt(r.amount)} {r.asset}</span>
                         {r.txHash ? (
-                          <a href={`https://suiscan.xyz/testnet/tx/${r.txHash}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary/60 hover:text-primary underline">tx ↗</a>
+                          <a href={explorerTx(r.txHash)} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary/60 hover:text-primary underline">tx ↗</a>
                         ) : <span className="text-[10px] text-foreground/20">—</span>}
                       </div>
                     </div>

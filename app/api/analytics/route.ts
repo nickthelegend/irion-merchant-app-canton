@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 
-// Settlement analytics for a merchant's apps: how much was settled with XORR.
+// Settlement analytics for a merchant's apps: how much was settled with Irion.
 export async function GET(req: NextRequest) {
   const walletAddress = req.headers.get("x-wallet-address");
   if (!walletAddress) return NextResponse.json({ error: "Missing wallet address" }, { status: 400 });

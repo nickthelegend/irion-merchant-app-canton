@@ -1,29 +1,29 @@
 'use client';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// XORR migration status (wallet/auth layer ported Privy -> @mysten/dapp-kit).
+// Irion migration status (wallet/auth ported to Stellar Wallets Kit; settlement
+// ported to the IrionCore Soroban contract).
 //
-// MOVE-WIRED (on-chain logic ported from EVM to the merchant_escrow module):
-//   - handleDeployEscrow:    create + share a `MerchantEscrow<USDT>` and mint a
-//                            MerchantCap; persists escrow id + cap id via PATCH.
-//   - handleWithdraw:        merchant withdraw of the full escrow balance via cap.
-//   - fetchBalance:          reads escrow balance via SuiClient.getObject.
-//   - fetchLogs:             reads PaymentSettled events via SuiClient.queryEvents.
-//   - The Sepolia chain-switch / chainId banner is EVM-only and has been removed.
-//
-// REMOVED: the FHE "Credit Settlement" panel (fetchRouterBalance / handleRouterWithdraw)
-//   — Sui has no FHE; BNPL/credit funds settle through merchant_escrow instead.
+// IRION-WIRED:
+//   - handleLinkEscrow:  there is no per-merchant contract to deploy on Irion.
+//                        Settlement/escrow lives in IrionCore keyed by the
+//                        merchant's Stellar address, so we simply persist the
+//                        connected wallet address as the app's settlement target.
+//   - handleWithdraw:    IrionCore::merchant_withdraw(merchant) sweeps the
+//                        merchant's accrued escrow to their wallet.
+//   - fetchBalance:      IrionCore::escrow_of(merchant) read.
+//   - Settlement history comes from the merchant's bills (MongoDB), not on-chain
+//     events.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const dynamic = 'force-dynamic';
 
 import { useParams, useRouter } from 'next/navigation';
-import { ConnectModal, useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 import useSWR from 'swr';
 import { useState, useEffect } from 'react';
-import { useTx, findCreated } from '@/lib/use-tx';
-import { createEscrowTx, withdrawTx, readEscrow, PAYMENT_SETTLED_EVENT } from '@/lib/escrow';
-import { suiscanAddressUrl, USDT_DECIMALS } from '@/lib/sui';
+import { useStellarWallet } from '@/lib/stellar-wallet';
+import { merchant } from '@/lib/merchant';
+import { explorerAccount } from '@/lib/stellar';
 import {
     ArrowLeft,
     ShieldCheck,
@@ -38,46 +38,53 @@ import {
     Loader2,
     RefreshCw,
     Receipt,
-    Wallet
+    Link2,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import WebhookManager from '@/components/WebhookManager';
 
 export default function AppDetails() {
     const { id } = useParams();
     const router = useRouter();
-    const account = useCurrentAccount();
-    const client = useSuiClient();
-    const runTx = useTx();
-    const authenticated = !!account;
+    const { address, connecting, connect, sign } = useStellarWallet();
+    const authenticated = !!address;
 
     const [mounted, setMounted] = useState(false);
-    const [connectOpen, setConnectOpen] = useState(false);
-    const [deploying, setDeploying] = useState(false);
+    const [linking, setLinking] = useState(false);
     const [statusText, setStatusText] = useState('');
     const [error, setError] = useState('');
-    const [logs, setLogs] = useState<any[]>([]);
-    const [refreshingLogs, setRefreshingLogs] = useState(false);
     const [withdrawing, setWithdrawing] = useState(false);
     const [balance, setBalance] = useState('0.00');
 
-    // Avoid hydration mismatch: dapp-kit hydrates the wallet on the client.
+    // Client secret rolling — the plaintext is only ever returned once, on roll.
+    const [rolledSecret, setRolledSecret] = useState('');
+    const [rollingSecret, setRollingSecret] = useState(false);
+
+    // Payment links (hosted checkout bills)
+    const [linkAmount, setLinkAmount] = useState('');
+    const [linkDesc, setLinkDesc] = useState('');
+    const [creatingLink, setCreatingLink] = useState(false);
+    const [linkError, setLinkError] = useState('');
+    const [links, setLinks] = useState<{ url: string; hash: string; amount: number; description: string }[]>([]);
+
+    // Avoid hydration mismatch: the wallet kit hydrates on the client.
     useEffect(() => setMounted(true), []);
 
     const { data, error: fetchError, mutate } = useSWR(
-        account?.address ? `/api/apps/${id}` : null,
+        address ? `/api/apps/${id}` : null,
         async (url) => {
             const res = await fetch(url, {
-                headers: { 'x-wallet-address': account?.address || '' }
+                headers: { 'x-wallet-address': address || '' }
             });
             return res.json();
         }
     );
 
     const { data: txData, mutate: mutateTx } = useSWR(
-        account?.address ? `/api/apps/${id}/transactions` : null,
+        address ? `/api/apps/${id}/transactions` : null,
         async (url) => {
             const res = await fetch(url, {
-                headers: { 'x-wallet-address': account?.address || '' }
+                headers: { 'x-wallet-address': address || '' }
             });
             return res.json();
         }
@@ -85,85 +92,34 @@ export default function AppDetails() {
 
     const app = data?.app;
     const transactions: any[] = txData?.transactions || [];
+    const settledTx = transactions.filter((t) => t.status === 'paid');
 
     const fetchBalance = async () => {
         if (!app?.escrow_contract) return;
         try {
-            const view = await readEscrow(client, app.escrow_contract);
-            setBalance((view?.balance ?? 0).toFixed(2));
+            const bal = await merchant.escrowBalance(app.escrow_contract);
+            setBalance(bal.toFixed(2));
         } catch (e) {
             console.error('fetchBalance failed', e);
         }
     };
 
-    const fetchLogs = async () => {
-        if (!app?.escrow_contract) return;
-        setRefreshingLogs(true);
-        try {
-            // PaymentSettled events for this escrow, newest first.
-            const { data } = await client.queryEvents({
-                query: { MoveEventType: PAYMENT_SETTLED_EVENT },
-                order: 'descending',
-                limit: 50,
-            });
-            const decoder = new TextDecoder();
-            const decodeOrderId = (raw: unknown): string => {
-                if (Array.isArray(raw)) {
-                    try { return decoder.decode(Uint8Array.from(raw as number[])); } catch { return ''; }
-                }
-                return typeof raw === 'string' ? raw : '';
-            };
-            const rows = data
-                .map((ev) => {
-                    const f = (ev.parsedJson || {}) as Record<string, unknown>;
-                    return {
-                        escrowId: String(f.escrow_id ?? ''),
-                        payer: String(f.payer ?? ''),
-                        amount: (Number(f.amount ?? 0) / 10 ** USDT_DECIMALS).toFixed(2),
-                        orderId: decodeOrderId(f.order_id) || '—',
-                        timestamp: ev.timestampMs
-                            ? new Date(Number(ev.timestampMs)).toLocaleString()
-                            : '',
-                    };
-                })
-                // Scope to this merchant's escrow object.
-                .filter((r) => r.escrowId === app.escrow_contract);
-            setLogs(rows);
-        } catch (e) {
-            console.error('fetchLogs failed', e);
-        } finally {
-            setRefreshingLogs(false);
-        }
-    };
-
     useEffect(() => {
         if (app?.escrow_contract) {
-            fetchLogs();
             fetchBalance();
-            const int = setInterval(() => {
-                fetchLogs();
-                fetchBalance();
-            }, 10000);
+            const int = setInterval(fetchBalance, 10000);
             return () => clearInterval(int);
         }
     }, [app?.escrow_contract]);
 
-    // Credit-settlement (FHE) panel removed — Sui has no FHE. BNPL/credit funds
-    // settle through the merchant_escrow Move module (fetchBalance / fetchLogs above).
-
     const handleWithdraw = async () => {
-        if (!account?.address || !app?.escrow_contract) return;
-        if (!app?.escrow_cap) {
-            setError('Missing merchant capability for this escrow — redeploy to re-link.');
-            return;
-        }
+        if (!address || !app?.escrow_contract) return;
         setWithdrawing(true);
         setError('');
         try {
-            // Sui: withdraw the full escrow balance using the MerchantCap, then
-            // refresh the on-chain balance.
-            const tx = withdrawTx(app.escrow_contract, app.escrow_cap, account.address);
-            await runTx('Withdraw', tx);
+            // IrionCore::merchant_withdraw(merchant) — the connected wallet is the
+            // escrow key, so it both authorizes and receives the payout.
+            await merchant.merchantWithdraw(address, sign);
             await fetchBalance();
         } catch (e: any) {
             console.error(e);
@@ -173,43 +129,37 @@ export default function AppDetails() {
         }
     };
 
-    const handleDeployEscrow = async () => {
-        if (!account?.address) return;
-        setDeploying(true);
+    const handleLinkEscrow = async () => {
+        if (!address) return;
+        setLinking(true);
         setError('');
 
         try {
-            // Sui: there is no per-merchant contract deploy. Instead create + share
-            // a MerchantEscrow<USDT> object and mint a MerchantCap to the caller in
-            // one programmable transaction.
-            setStatusText('Creating escrow...');
-            const res = await runTx('Deploy escrow', createEscrowTx());
-
-            // Capture the shared escrow object id and the merchant cap id.
-            const escrowId = findCreated(res, '::merchant_escrow::MerchantEscrow');
-            const capId = findCreated(res, '::merchant_escrow::MerchantCap');
-            if (!escrowId || !capId) {
-                throw new Error('Escrow created but object ids were not found in tx effects.');
-            }
-
-            // Persist both so withdraw/balance/logs can use them.
-            setStatusText('Linking escrow...');
+            // Irion has no per-merchant contract deploy. Persist the connected
+            // Stellar address as the app's settlement target; IrionCore tracks the
+            // escrow balance under this address.
+            setStatusText('Linking settlement address...');
             const patch = await fetch(`/api/apps/${id}`, {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-wallet-address': account.address,
+                    'x-wallet-address': address,
                 },
-                body: JSON.stringify({ escrow_contract: escrowId, escrow_cap: capId, network: 'sui' }),
+                body: JSON.stringify({
+                    escrow_contract: address,
+                    escrow_cap: address,
+                    stellar_address: address,
+                    network: 'stellar:testnet',
+                }),
             });
-            if (!patch.ok) throw new Error('Failed to persist escrow id.');
+            if (!patch.ok) throw new Error('Failed to persist settlement address.');
 
             await mutate();
         } catch (e: any) {
             console.error(e);
-            setError(e.message || 'Deployment failed');
+            setError(e.message || 'Linking failed');
         } finally {
-            setDeploying(false);
+            setLinking(false);
             setStatusText('');
         }
     };
@@ -221,6 +171,61 @@ export default function AppDetails() {
         setTimeout(() => setStatusText(''), 2000);
     };
 
+    // Create a hosted payment link (a bill) with this app's API credentials. The
+    // returned checkoutUrl points at the Irion core /pay page — share it or show
+    // the QR; the customer pays Direct or BNPL there and it settles to escrow.
+    const handleCreateLink = async () => {
+        if (!app) return;
+        const amt = parseFloat(linkAmount);
+        if (!amt || amt <= 0) { setLinkError('Enter an amount greater than 0.'); return; }
+        setCreatingLink(true);
+        setLinkError('');
+        try {
+            const res = await fetch(`/api/apps/${id}/bills`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-wallet-address': address,
+                },
+                body: JSON.stringify({ amount: amt, description: linkDesc || `Payment to ${app.name}` }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error || !data.checkoutUrl) throw new Error(data.error || 'Failed to create link');
+            setLinks((prev) => [
+                { url: data.checkoutUrl, hash: data.billHash, amount: amt, description: linkDesc || `Payment to ${app.name}` },
+                ...prev,
+            ]);
+            setLinkAmount('');
+            setLinkDesc('');
+        } catch (e: any) {
+            setLinkError(e.message || 'Failed to create link');
+        } finally {
+            setCreatingLink(false);
+        }
+    };
+
+    // Roll the client secret. The plaintext is returned ONCE and shown in local
+    // state so the merchant can copy it; it is never stored or re-fetchable.
+    const handleRollSecret = async () => {
+        if (!address) return;
+        if (!confirm('Roll the client secret? Any code using the old secret will stop working until updated.')) return;
+        setRollingSecret(true);
+        setError('');
+        try {
+            const res = await fetch(`/api/apps/${id}/roll-secret`, {
+                method: 'POST',
+                headers: { 'x-wallet-address': address },
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.client_secret) throw new Error(data.error || 'Failed to roll secret');
+            setRolledSecret(data.client_secret);
+        } catch (e: any) {
+            setError(e.message || 'Failed to roll secret');
+        } finally {
+            setRollingSecret(false);
+        }
+    };
+
     if (!mounted) return null;
 
     if (!authenticated) {
@@ -229,17 +234,13 @@ export default function AppDetails() {
                 <div className="text-center relative z-10">
                     <Zap className="w-12 h-12 text-primary mx-auto mb-6 animate-pulse neon-glow" />
                     <h2 className="text-xl font-bold mb-4 uppercase tracking-tighter">Session Required</h2>
-                    <ConnectModal
-                        open={connectOpen}
-                        onOpenChange={setConnectOpen}
-                        trigger={
-                            <button
-                                className="bg-primary text-black px-10 py-4 rounded-xl font-black uppercase text-sm tracking-widest hover:scale-105 transition-all shadow-[0_8px_30px_rgba(166,242,74,0.3)]"
-                            >
-                                Connect Terminal
-                            </button>
-                        }
-                    />
+                    <button
+                        onClick={connect}
+                        disabled={connecting}
+                        className="bg-primary text-black px-10 py-4 rounded-xl font-black uppercase text-sm tracking-widest hover:scale-105 transition-all disabled:opacity-60 shadow-[0_8px_30px_rgba(166,242,74,0.3)]"
+                    >
+                        {connecting ? 'Connecting…' : 'Connect Terminal'}
+                    </button>
                 </div>
             </div>
         );
@@ -279,7 +280,7 @@ export default function AppDetails() {
                             <h1 className="text-3xl font-black uppercase italic tracking-tighter">{app.name}</h1>
                             <div className="ml-4 px-2 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] text-white/40 font-bold uppercase tracking-widest flex items-center gap-2">
                                 <div className="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_rgba(166,242,74,0.5)]" />
-                                Linked: {account?.address.slice(0, 6)}...{account?.address.slice(-4)}
+                                Linked: {address?.slice(0, 6)}...{address?.slice(-4)}
                             </div>
                         </div>
                         <p className="text-white/40 text-xs uppercase tracking-widest font-medium">{app.category || 'General Application'}</p>
@@ -291,10 +292,6 @@ export default function AppDetails() {
                     </div>
                 </div>
             </header>
-
-            {/* The EVM Sepolia chain-switch banner was removed. Sui dapp-kit
-                manages the active network via SuiClientProvider (defaultNetwork
-                from lib/sui.ts), so there is no per-tx chain switch to prompt. */}
 
             <main className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
                 {/* Left Column: API Keys */}
@@ -319,18 +316,108 @@ export default function AppDetails() {
 
                             <div>
                                 <label className="text-[10px] uppercase text-white/40 font-bold block mb-2">Client Secret</label>
-                                <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded px-4 py-3 group">
-                                    <code className="text-sm text-white/80 flex-1 blur-sm hover:blur-none transition-all duration-300">
-                                        {app.client_secret}
-                                    </code>
-                                    <Copy
-                                        onClick={() => handleCopy(app.client_secret)}
-                                        className="w-4 h-4 text-white/20 hover:text-white cursor-pointer transition-colors"
-                                    />
-                                </div>
-                                <p className="text-[10px] text-white/20 mt-2 italic">* Secret is encrypted. Hover to reveal.</p>
+                                {rolledSecret ? (
+                                    <div className="flex items-center gap-2 bg-black/40 border border-primary/20 rounded px-4 py-3 group">
+                                        <code className="text-sm text-primary flex-1 select-all break-all">
+                                            {rolledSecret}
+                                        </code>
+                                        <Copy
+                                            onClick={() => handleCopy(rolledSecret)}
+                                            className="w-4 h-4 text-white/20 hover:text-white cursor-pointer transition-colors shrink-0"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded px-4 py-3">
+                                        <code className="text-sm text-white/40 flex-1">••••••••••••••••••••••••</code>
+                                        <button
+                                            onClick={handleRollSecret}
+                                            disabled={rollingSecret}
+                                            className="bg-primary text-black px-3 py-1.5 rounded-lg font-black text-[10px] uppercase tracking-tighter hover:scale-105 disabled:opacity-40 transition-all flex items-center gap-2 shrink-0"
+                                        >
+                                            {rollingSecret ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Roll Secret'}
+                                        </button>
+                                    </div>
+                                )}
+                                <p className="text-[10px] text-white/20 mt-2 italic">
+                                    {rolledSecret
+                                        ? '* Copy it now — it is shown only this once and cannot be revealed again.'
+                                        : '* Shown once at creation — roll to reveal a new one.'}
+                                </p>
                             </div>
                         </div>
+                    </section>
+
+                    {/* Payment Links — create a hosted checkout bill + QR */}
+                    <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-6">
+                        <div className="flex items-center gap-2 mb-6">
+                            <Link2 className="w-5 h-5 text-primary" />
+                            <h2 className="text-lg font-bold">Payment Links</h2>
+                        </div>
+
+                        {!app.escrow_contract && (
+                            <div className="mb-4 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-[11px] p-3 rounded flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 shrink-0" />
+                                Link a settlement address first (right) — a customer&apos;s payment needs a destination.
+                            </div>
+                        )}
+
+                        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                            <div className="flex items-center gap-2 bg-black/40 border border-white/10 rounded px-3 py-2 sm:w-36">
+                                <span className="text-white/30 text-[10px] font-bold uppercase">USDC</span>
+                                <input
+                                    value={linkAmount}
+                                    onChange={(e) => setLinkAmount(e.target.value)}
+                                    type="number" min="0" step="0.01" placeholder="25.00"
+                                    className="bg-transparent outline-none text-sm font-bold w-full"
+                                />
+                            </div>
+                            <input
+                                value={linkDesc}
+                                onChange={(e) => setLinkDesc(e.target.value)}
+                                placeholder="What's this for? (optional)"
+                                className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
+                            />
+                            <button
+                                onClick={handleCreateLink}
+                                disabled={creatingLink}
+                                className="bg-primary text-black px-5 py-2 rounded-lg font-black text-[10px] uppercase tracking-tighter hover:scale-105 disabled:opacity-40 transition-all flex items-center justify-center gap-2"
+                            >
+                                {creatingLink ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Create Link'}
+                            </button>
+                        </div>
+
+                        {linkError && (
+                            <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] p-3 rounded flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 shrink-0" /> {linkError}
+                            </div>
+                        )}
+
+                        {links.length === 0 ? (
+                            <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-8 text-center">
+                                <p className="text-[10px] text-white/20 uppercase tracking-widest font-bold">No payment links yet — create one above</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {links.map((lnk) => (
+                                    <div key={lnk.hash} className="bg-black/40 border border-white/5 p-4 rounded-xl flex items-center gap-4">
+                                        <div className="bg-white p-2 rounded-lg shrink-0">
+                                            <QRCodeSVG value={lnk.url} size={84} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-black text-white mb-1">{lnk.amount} USDC</div>
+                                            <div className="text-[10px] text-white/40 mb-2 truncate">{lnk.description}</div>
+                                            <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded px-2 py-1">
+                                                <code className="text-[10px] text-white/60 flex-1 truncate">{lnk.url}</code>
+                                                <Copy onClick={() => handleCopy(lnk.url)} className="w-3.5 h-3.5 text-white/20 hover:text-white cursor-pointer shrink-0" />
+                                                <a href={lnk.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-white shrink-0">
+                                                    <ExternalLink className="w-3.5 h-3.5" />
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </section>
 
                     <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-6">
@@ -341,7 +428,7 @@ export default function AppDetails() {
 
                         <div className="bg-black/60 rounded-xl overflow-hidden border border-white/5">
                             <div className="bg-white/5 px-4 py-2 border-b border-white/5 flex items-center justify-between">
-                                <span className="text-[10px] text-white/40 uppercase font-bold">@xorr/sdk · Buy Now, Pay Never</span>
+                                <span className="text-[10px] text-white/40 uppercase font-bold">@irion/sdk · Buy Now, Pay Never</span>
                                 <div className="flex gap-1.5">
                                     <div className="w-2 h-2 rounded-full bg-red-500/20" />
                                     <div className="w-2 h-2 rounded-full bg-yellow-500/20" />
@@ -350,19 +437,19 @@ export default function AppDetails() {
                             </div>
                             <pre className="p-6 text-xs text-teal-100/70 overflow-x-auto leading-relaxed">
                                 {`// 1. Install
-//    npm install @xorr/sdk
+//    npm install @irion/sdk
 
-// 2. SERVER — e.g. app/api/xorr-checkout/route.ts
+// 2. SERVER — e.g. app/api/irion-checkout/route.ts
 //    Keep the secret in an env var; never ship it to the browser.
-import { XorrClient } from "@xorr/sdk";
+import { IrionClient } from "@irion/sdk";
 
-const xorr = new XorrClient({
+const irion = new IrionClient({
   clientId: "${app.client_id}",
-  clientSecret: process.env.XORR_CLIENT_SECRET!,
+  clientSecret: process.env.IRION_CLIENT_SECRET!,
 });
 
 export async function POST() {
-  const { checkoutUrl } = await xorr.createCheckout({
+  const { checkoutUrl } = await irion.createCheckout({
     amount: 125.50,
     orderId: "order_1024",
     description: "Order #1024",
@@ -371,20 +458,20 @@ export async function POST() {
 }
 
 // 3. CLIENT — drop the button on your shopping site
-import { PayWithXorr } from "@xorr/sdk/react";
+import { PayWithIrion } from "@irion/sdk/react";
 
-<PayWithXorr
+<PayWithIrion
   createCheckout={() =>
-    fetch("/api/xorr-checkout", { method: "POST" }).then((r) => r.json())
+    fetch("/api/irion-checkout", { method: "POST" }).then((r) => r.json())
   }
-  onSuccess={(r) => console.log("paid!", r.txDigest, r.loanId)}
+  onSuccess={(r) => console.log("paid!", r.txHash, r.loanId)}
 />`}
                             </pre>
                         </div>
                         <p className="text-[11px] text-white/30 mt-3 leading-relaxed">
                             Your client secret stays server-side. The shopper picks <span className="text-primary/70">Pay Never</span> (collateral earns
-                            yield that auto-repays) or pays in full — credit is scored privately in the TEE. You get back the
-                            Sui <code className="text-white/50">txDigest</code> and <code className="text-white/50">loanId</code>.
+                            yield that auto-repays) or pays in full — credit is scored privately with a ZK proof. You get back the
+                            Stellar <code className="text-white/50">txHash</code> and <code className="text-white/50">loanId</code>.
                         </p>
                     </section>
 
@@ -392,43 +479,41 @@ import { PayWithXorr } from "@xorr/sdk/react";
                         <div className="flex items-center justify-between mb-6">
                             <div className="flex items-center gap-2">
                                 <Terminal className="w-5 h-5 text-primary" />
-                                <h2 className="text-lg font-bold">Transaction Stream</h2>
+                                <h2 className="text-lg font-bold">Settlement Stream</h2>
                             </div>
-                            {app.escrow_contract && (
-                                <button
-                                    onClick={fetchLogs}
-                                    className={`p-2 hover:bg-white/5 rounded-lg transition-colors ${refreshingLogs ? 'animate-spin' : ''}`}
-                                >
-                                    <RefreshCw className="w-4 h-4 text-white/30" />
-                                </button>
-                            )}
+                            <button
+                                onClick={() => mutateTx()}
+                                className="p-2 hover:bg-white/5 rounded-lg transition-colors"
+                            >
+                                <RefreshCw className="w-4 h-4 text-white/30" />
+                            </button>
                         </div>
 
                         {!app.escrow_contract ? (
                             <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-12 text-center">
-                                <p className="text-xs text-white/20 uppercase tracking-widest">Connect escrow to view stream</p>
+                                <p className="text-xs text-white/20 uppercase tracking-widest">Link settlement address to view stream</p>
                             </div>
-                        ) : logs.length === 0 ? (
+                        ) : settledTx.length === 0 ? (
                             <div className="bg-black/20 border border-dashed border-white/10 rounded-xl p-12 text-center">
                                 <Loader2 className="w-6 h-6 text-white/20 animate-spin mx-auto mb-4" />
                                 <p className="text-xs text-white/20 uppercase tracking-widest">Awaiting first settlement...</p>
                             </div>
                         ) : (
                             <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                                {logs.map((log, i) => (
+                                {settledTx.map((log, i) => (
                                     <div key={i} className="bg-black/40 border border-white/5 p-4 rounded-xl flex items-center justify-between gap-4 group hover:border-teal-500/30 transition-colors">
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-xs font-bold text-teal-400">SETTLED</span>
-                                                <span className="text-[10px] text-white/30 font-mono">#{log.orderId}</span>
+                                                <span className="text-[10px] text-white/30 font-mono">{log.payment_mode || 'bnpl'}</span>
                                             </div>
                                             <div className="text-[10px] text-white/60 truncate">
-                                                From: {log.payer.slice(0, 10)}...{log.payer.slice(-8)}
+                                                {log.tx_hash ? `tx ${String(log.tx_hash).slice(0, 10)}...${String(log.tx_hash).slice(-8)}` : '—'}
                                             </div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="text-sm font-bold text-white">+{log.amount} USDC</div>
-                                            <div className="text-[9px] text-white/20">{log.timestamp}</div>
+                                            <div className="text-sm font-bold text-white">+{log.amount} {log.asset || 'USDC'}</div>
+                                            <div className="text-[9px] text-white/20">{log.paid_at ? new Date(log.paid_at).toLocaleString() : ''}</div>
                                         </div>
                                     </div>
                                 ))}
@@ -436,7 +521,7 @@ import { PayWithXorr } from "@xorr/sdk/react";
                         )}
                     </section>
 
-                    <WebhookManager appId={id as string} />
+                    <WebhookManager appId={id as string} walletAddress={address} />
 
                     {/* Bill Transactions Section */}
                     <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-6">
@@ -498,7 +583,7 @@ import { PayWithXorr } from "@xorr/sdk/react";
                     </section>
                 </div>
 
-                {/* Right Column: Escrow Deployment */}
+                {/* Right Column: Settlement address */}
                 <div className="space-y-8">
                     <section className="bg-white/[0.03] border border-white/10 rounded-2xl p-6 relative overflow-hidden">
                         <div className="absolute top-0 right-0 w-24 h-24 bg-primary/10 blur-3xl -mr-12 -mt-12" />
@@ -512,13 +597,13 @@ import { PayWithXorr } from "@xorr/sdk/react";
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 p-3 bg-green-500/10 border border-green-500/20 rounded-xl text-green-400">
                                     <CheckCircle2 className="w-5 h-5 shrink-0" />
-                                    <span className="text-xs font-bold uppercase">Contract Deployed</span>
+                                    <span className="text-xs font-bold uppercase">Settlement Linked</span>
                                 </div>
                                 <div className="bg-black/40 border border-white/5 rounded p-3">
-                                    <label className="text-[9px] uppercase text-white/30 block mb-1">Escrow Object</label>
+                                    <label className="text-[9px] uppercase text-white/30 block mb-1">Settlement Address</label>
                                     <div className="flex items-center justify-between gap-1">
                                         <code className="text-[10px] text-white/60 truncate">{app.escrow_contract}</code>
-                                        <a href={suiscanAddressUrl(app.escrow_contract)} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-white">
+                                        <a href={explorerAccount(app.escrow_contract)} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-white">
                                             <ExternalLink className="w-3 h-3" />
                                         </a>
                                     </div>
@@ -536,15 +621,21 @@ import { PayWithXorr } from "@xorr/sdk/react";
                                         {withdrawing ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Withdraw'}
                                     </button>
                                 </div>
+                                {error && (
+                                    <div className="bg-red-500/10 border border-red-500/20 text-red-500 text-[10px] p-3 rounded flex items-start gap-2">
+                                        <AlertCircle className="w-4 h-4 shrink-0" />
+                                        {error}
+                                    </div>
+                                )}
                                 <p className="text-[10px] text-white/30 leading-relaxed italic">
-                                    Your escrow is active on Sui. Payments will be routed here.
+                                    Settlements accrue to your IrionCore escrow. Withdraw sweeps the balance to your wallet.
                                 </p>
                             </div>
                         ) : (
                             <div className="space-y-4">
                                 <p className="text-xs text-white/50 leading-relaxed">
-                                    To receive payments, you must deploy a dedicated <span className="text-white">MerchantEscrow</span> contract.
-                                    This ensures your funds are segregated and secure.
+                                    To receive payments, link your <span className="text-white">Stellar wallet</span> as this app&apos;s
+                                    settlement address. IrionCore credits this address when shoppers pay.
                                 </p>
 
                                 {error && (
@@ -555,20 +646,20 @@ import { PayWithXorr } from "@xorr/sdk/react";
                                 )}
 
                                 <button
-                                    onClick={handleDeployEscrow}
-                                    disabled={deploying}
+                                    onClick={handleLinkEscrow}
+                                    disabled={linking}
                                     className="w-full bg-primary hover:scale-[1.02] disabled:bg-white/10 disabled:text-white/20 text-black font-black uppercase tracking-tighter py-3 rounded-xl transition-all flex items-center justify-center gap-3 active:scale-[0.98] shadow-lg shadow-primary/20"
                                 >
-                                    {deploying ? (
+                                    {linking ? (
                                         <>
                                             <Loader2 className="w-4 h-4 animate-spin" />
                                             {statusText || 'Processing...'}
                                         </>
                                     ) : (
-                                        'Deploy Escrow'
+                                        'Link Settlement Address'
                                     )}
                                 </button>
-                                <p className="text-[9px] text-white/20 text-center uppercase tracking-widest font-bold">Gas paid in SUI</p>
+                                <p className="text-[9px] text-white/20 text-center uppercase tracking-widest font-bold">Gas paid in XLM</p>
                             </div>
                         )}
                     </section>
@@ -581,21 +672,18 @@ import { PayWithXorr } from "@xorr/sdk/react";
                         <div className="space-y-3">
                             <div className="flex justify-between text-[11px]">
                                 <span className="text-white/30">Network</span>
-                                <span className="text-white/60 font-bold">Sui Testnet</span>
+                                <span className="text-white/60 font-bold">Stellar Testnet</span>
                             </div>
                             <div className="flex justify-between text-[11px]">
                                 <span className="text-white/30">Currency</span>
-                                <span className="text-white/60 font-bold">USDC (Mock)</span>
+                                <span className="text-white/60 font-bold">USDC</span>
                             </div>
                             <div className="flex justify-between text-[11px]">
-                                <span className="text-white/30">Module</span>
-                                <span className="text-white/60 font-bold">merchant_escrow</span>
+                                <span className="text-white/30">Contract</span>
+                                <span className="text-white/60 font-bold">IrionCore</span>
                             </div>
                         </div>
                     </section>
-
-                    {/* The FHE "Credit Settlement" panel was removed — Sui has no FHE.
-                        Escrow balance + PaymentSettled history are shown above (merchant_escrow). */}
                 </div>
             </main>
         </div>

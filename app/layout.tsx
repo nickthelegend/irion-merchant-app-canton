@@ -10,11 +10,11 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata = {
-  title: 'XORR for Merchants | Accept BNPL on Sui',
-  description: 'Accept Buy-Now-Pay-Never payments on Sui with one line of code.',
+  title: 'Irion for Merchants | Accept BNPL on Stellar',
+  description: 'Accept Buy-Now-Pay-Never payments on Stellar with one line of code.',
   icons: {
-    icon: '/xorr-logo.png',
-    apple: '/xorr-logo.png',
+    icon: '/logo.png',
+    apple: '/logo.png',
   },
 };
 

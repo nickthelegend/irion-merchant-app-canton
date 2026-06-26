@@ -2,32 +2,32 @@
 
 import { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { SuiClientProvider, WalletProvider, createNetworkConfig } from '@mysten/dapp-kit';
-import '@mysten/dapp-kit/dist/index.css';
 import { Toaster } from 'sonner';
-import { SUI_NETWORK, SUI_RPC_URLS } from '@/lib/sui';
+import { StellarWalletProvider } from '@/lib/stellar-wallet';
+import { ConnectKitProvider } from '@/lib/canton-connect-kit';
+import type { ConnectKitConfig } from '@/lib/canton-connect-kit';
 
-// Sui networks for @mysten/dapp-kit. Each entry needs { url, network } — the
-// @mysten/sui 2.19 `getFullnodeUrl` helper was removed, so URLs come from
-// the hardcoded map in lib/sui.ts.
-const { networkConfig } = createNetworkConfig({
-    testnet: { url: SUI_RPC_URLS.testnet, network: 'testnet' },
-    mainnet: { url: SUI_RPC_URLS.mainnet, network: 'mainnet' },
-    devnet: { url: SUI_RPC_URLS.devnet, network: 'devnet' },
-    localnet: { url: SUI_RPC_URLS.localnet, network: 'localnet' },
-});
-
+// The merchant app is Canton-first: the whole app sits under the Carpincho
+// ConnectKitProvider so the global header + the sidebar console share one wallet
+// connection. (StellarWalletProvider is kept only for the not-yet-ported legacy
+// pages — the app detail + demo shop.) The dapp-sdk is lazy-loaded on connect,
+// so this provider is SSR-safe at the root.
 const queryClient = new QueryClient();
+const cantonConfig: ConnectKitConfig = {
+    appName: 'Irion Merchant',
+    appDescription: 'Accept BNPL & private credit on the Canton Network',
+    network: 'canton:irion-sandbox',
+};
 
 export default function Providers({ children }: { children: ReactNode }) {
     return (
         <QueryClientProvider client={queryClient}>
-            <SuiClientProvider networks={networkConfig} defaultNetwork={SUI_NETWORK}>
-                <WalletProvider autoConnect>
+            <ConnectKitProvider config={cantonConfig}>
+                <StellarWalletProvider>
                     {children}
                     <Toaster position="top-right" theme="dark" />
-                </WalletProvider>
-            </SuiClientProvider>
+                </StellarWalletProvider>
+            </ConnectKitProvider>
         </QueryClientProvider>
     );
 }
