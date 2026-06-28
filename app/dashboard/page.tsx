@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Wallet, Landmark, Users, ArrowRight, Loader2 } from "lucide-react";
+import { Wallet, Landmark, Users, ArrowRight, Loader2, KeyRound } from "lucide-react";
 import { useNeobank } from "@/components/neobank/auth";
 import * as nb from "@/lib/neobank";
 import { PageHeader, Card, Stat, fmt, page } from "@/components/neobank/ui";
@@ -41,8 +41,9 @@ export default function Overview() {
         <Stat label="Currencies" value={Object.keys(balances).length || 1} sub={Object.keys(balances).join(" · ") || "USDC"} />
       </div>
 
-      <div className="grid md:grid-cols-3 gap-4 mb-8">
+      <div className="grid md:grid-cols-2 gap-4 mb-8">
         {[
+          { href: "/dashboard/apps", label: "Apps & API keys", desc: "Create an app → checkout keys + billing links for any store", icon: KeyRound },
           { href: "/dashboard/treasury", label: "Move & rebalance", desc: "Deposit, FX swap USDC↔EURC, earn yield", icon: Wallet },
           { href: "/dashboard/payroll", label: "Run payroll", desc: "Private salaries — each invisible to others", icon: Users },
           { href: "/dashboard/lending", label: "Borrow", desc: "Working capital against your credit line", icon: Landmark },

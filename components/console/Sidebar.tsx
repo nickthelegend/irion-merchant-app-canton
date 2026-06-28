@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, Wallet, Users, Landmark, ArrowLeftRight, Settings, Power, ShieldCheck } from "lucide-react";
+import { LayoutGrid, Wallet, Users, Landmark, ArrowLeftRight, Settings, Power, ShieldCheck, KeyRound } from "lucide-react";
 import { useNeobank } from "@/components/neobank/auth";
 
 const NAV = [
   { href: "/dashboard", label: "Overview", icon: LayoutGrid },
+  { href: "/dashboard/apps", label: "Apps & Keys", icon: KeyRound },
   { href: "/dashboard/treasury", label: "Treasury", icon: Wallet },
   { href: "/dashboard/payroll", label: "Payroll", icon: Users },
   { href: "/dashboard/lending", label: "Lending", icon: Landmark },
